@@ -19,6 +19,8 @@ repositories {
     // Use jcenter for resolving your dependencies.
     // You can declare any Maven/Ivy/file repository here.
     jcenter()
+    mavenCentral()
+
 }
 
 
@@ -42,6 +44,9 @@ dependencies {
 
     runtime 'org.apache.logging.log4j:log4j-slf4j-impl:2.9.1'
 
+    compile 'com.google.code.gson:gson:2.2.4'
+    compile group: 'org.json', name: 'json', version: '20090211'
+
     // Use JUnit test framework
     testCompile 'junit:junit:4.12'
 }
@@ -55,7 +60,7 @@ docker {
         baseImage = 'jfisbein/alpine-oracle-jdk9'
 //        baseImage = 'dockerregistry.jtechnopolis.pw:5443/oracle-jdk-9-centos-7:0.0.1'
         maintainer = 'Maintainer'
-        port = 8080
+        port = 4848
 //        tag = 'oracle-9-jdk'
     }
 }
@@ -64,5 +69,5 @@ group = 'edu.tecnopolis.advjava'
 version = '0.0.1'
 sourceCompatibility = 1.8
 // Define the main class for the application
-mainClassName = 'edu.technopolis.advanced.boatswain.BoatswainBot'
+mainClassName = 'edu.technopolis.advanced.weather.WeatherBot'
 
