@@ -1,5 +1,8 @@
 package edu.technopolis.advancedjava.season2;
 
+import edu.technopolis.advancedjava.season2.authenticate.Read;
+import edu.technopolis.advancedjava.season2.entity.Stage;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -11,8 +14,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
-import com.sun.istack.internal.NotNull;
-
 /**
  * Сервер, построенный на API java.nio.* . Работает единственный поток,
  * обрабатывающий события, полученные из селектора.
@@ -20,85 +21,67 @@ import com.sun.istack.internal.NotNull;
  * замедлит обработку соединений.
  */
 public class NewServer {
+    private static final int PORT = 1080;
+
     public static void main(String[] args) {
-        Map<SocketChannel, ByteBuffer> map = new HashMap<>();
+        Map<SocketChannel, Stage> stages = new HashMap<>();
+
         try (ServerSocketChannel serverChannel = ServerSocketChannel.open();
-             Selector selector = Selector.open()){
+             Selector selector = Selector.open()) {
             serverChannel.configureBlocking(false);
-            serverChannel.bind(new InetSocketAddress(10001));
+            serverChannel.bind(new InetSocketAddress(PORT));
             serverChannel.register(selector, SelectionKey.OP_ACCEPT);
             while (true) {
-                selector.select(); //блокирующий вызов
-                @NotNull
+                selector.select();
                 Set<SelectionKey> keys = selector.selectedKeys();
                 if (keys.isEmpty()) {
                     continue;
                 }
-                //при обработке ключей из множества selected, необходимо обязательно очищать множество.
-                //иначе те же ключи могут быть обработаны снова
                 keys.removeIf(key -> {
                     if (!key.isValid()) {
                         return true;
                     }
                     if (key.isAcceptable()) {
-                        return accept(map, key);
+                        return accept(stages, key);
                     }
-                    if (key.isReadable()) {
-                        //Внимание!!!
-                        //Важно, чтобы при обработке не было долгоиграющих (например, блокирующих операций),
-                        //поскольку текущий поток занимается диспетчеризацией каналов и должен быть всегда доступен
-                        return read(map, key);
-                    }
+
                     if (key.isWritable()) {
-                        //Внимание!!!
-                        //Важно, чтобы при обработке не было долгоиграющих (например, блокирующих операций),
-                        //поскольку текущий поток занимается диспетчеризацией каналов и должен быть всегда доступен
-                        return write(map, key);
+                        stages.get(key.channel()).proceed(SelectionKey.OP_WRITE, selector, stages);
+                        return true;
+                    }
+
+                    if (key.isConnectable()) {
+                        stages.get(key.channel()).proceed(SelectionKey.OP_CONNECT, selector, stages);
+                        return true;
+                    }
+
+                    if (key.isReadable()) {
+                        stages.get(key.channel()).proceed(SelectionKey.OP_READ, selector, stages);
+                        return true;
                     }
                     return true;
                 });
-                //удаление закрытых каналов из списка обрабатываемых
-                map.keySet().removeIf(channel -> !channel.isOpen());
+                stages.keySet().removeIf(channel -> !channel.isOpen());
             }
 
         } catch (IOException e) {
-            LogUtils.logException("Unexpected error on processing incoming connection", e);
+            LogUtils.logException("Unexpected error", e);
         }
     }
 
-    private static boolean write(Map<SocketChannel, ByteBuffer> map, SelectionKey key) {
-        SocketChannel channel = (SocketChannel) key.channel();
-        ByteBuffer buffer = map.get(channel);
-        try {
-            while (buffer.hasRemaining()) {
-                channel.write(buffer);
-            }
-            buffer.compact();
-            key.interestOps(SelectionKey.OP_READ);
-        } catch (IOException e) {
-            closeChannel(channel);
-            e.printStackTrace();
-        }
-        return true;
-    }
-
-    private static boolean read(Map<SocketChannel, ByteBuffer> map, SelectionKey key) {
-        SocketChannel channel = (SocketChannel) key.channel();
-        if (handleSocketChannel(channel, map.get(channel))) {
-            key.interestOps(SelectionKey.OP_WRITE);
-        }
-        return true;
-    }
-
-    private static boolean accept(Map<SocketChannel, ByteBuffer> map, SelectionKey key) {
+    private static boolean accept(Map<SocketChannel, Stage> channelsMap, SelectionKey key) {
         ServerSocketChannel serverChannel = (ServerSocketChannel) key.channel();
         SocketChannel channel = null;
         try {
-            channel = serverChannel.accept(); //non-blocking call
+            System.out.print("Accepting ");
+            channel = serverChannel.accept();
+            System.out.print(channel.getRemoteAddress());
             channel.configureBlocking(false);
             channel.register(key.selector(), SelectionKey.OP_READ);
-            map.put(channel, ByteBuffer.allocateDirect(80));
+            channelsMap.put(channel, new Read(channel, ByteBuffer.allocate(300)));
+            System.out.println(": accepted");
         } catch (IOException e) {
+            System.out.println(": not accepted");
             LogUtils.logException("Failed to process channel " + channel, e);
             if (channel != null) {
                 closeChannel(channel);
@@ -107,43 +90,12 @@ public class NewServer {
         return true;
     }
 
-    private static boolean handleSocketChannel(SocketChannel channel, ByteBuffer bb) {
+    private static void closeChannel(SocketChannel channel) {
         try {
-            int bytesRead = channel.read(bb);
-            if (bytesRead == 0) {
-                return false;
-            }
-            if (bytesRead == -1) {
-                closeChannel(channel);
-                return false;
-            }
-            bb.flip();
-            doMagic(bb);
-            return true;
+            System.out.println("Closing channel " + channel.getRemoteAddress());
+            channel.close();
         } catch (IOException e) {
-            LogUtils.logException("Failed to read data from channel " + channel, e);
-            closeChannel(channel);
-            return false;
+            System.err.println("Failed to close channel " + channel);
         }
-    }
-
-    private static void doMagic(ByteBuffer bb) {
-        for (int index = bb.position(); index < bb.limit(); index++) {
-            bb.put(index, (byte) doMagic(bb.get(index)));
-        }
-    }
-
-    private static void closeChannel(SocketChannel accept) {
-        try {
-            accept.close();
-        } catch (IOException e) {
-            System.err.println("Failed to close channel " + accept);
-        }
-    }
-
-    private static int doMagic(int data) {
-        return Character.isLetter(data)
-                ? data ^ ' '
-                : data;
     }
 }

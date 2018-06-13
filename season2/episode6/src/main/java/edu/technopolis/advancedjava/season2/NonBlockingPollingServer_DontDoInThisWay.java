@@ -7,8 +7,6 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.HashMap;
 
-import jdk.internal.jline.internal.Nullable;
-
 /**
  * Пример неудачной реализации сервера на nio.
  * Несмотря на то, что один поток обрабатывает все запросы, данное решение ресурсоёмкое (100% CPU, большая часть sys
@@ -21,7 +19,6 @@ public class NonBlockingPollingServer_DontDoInThisWay {
         HashMap<SocketChannel, ByteBuffer> map = new HashMap<>();
         try (ServerSocketChannel open = openAndBind()) {
             while (true) {
-                @Nullable
                 SocketChannel accept = open.accept(); //не блокируется, почти всегда null
                 if (accept != null) {
                     accept.configureBlocking(false);
@@ -54,10 +51,11 @@ public class NonBlockingPollingServer_DontDoInThisWay {
     }
 
     private static ServerSocketChannel openAndBind() throws IOException {
-        ServerSocketChannel open = ServerSocketChannel.open();
-        open.bind(new InetSocketAddress(10101));
-        open.configureBlocking(false);
-        return open;
+        try (ServerSocketChannel open = ServerSocketChannel.open()) {
+            open.bind(new InetSocketAddress(10101));
+            open.configureBlocking(false);
+            return open;
+        }
     }
 
     private static void closeChannel(SocketChannel sc) {
